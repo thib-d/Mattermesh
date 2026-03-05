@@ -19,8 +19,8 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        MATTERMOST_REPO: https://github.com/thib-d/mattermost
-        MATTERMOST_REF: master
+        MATTERMOST_REPO: https://github.com/mattermost/mattermost
+        MATTERMOST_REF: e296a314bb93a318b66aec81353776b7d95aa04a
     restart: unless-stopped
     depends_on:
       postgres:

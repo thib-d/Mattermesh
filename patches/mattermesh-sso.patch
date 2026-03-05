@@ -1,0 +1,135 @@
+diff --git a/server/config/client.go b/server/config/client.go
+index 78d8337..58bf3c7 100644
+--- a/server/config/client.go
++++ b/server/config/client.go
+@@ -358,7 +358,10 @@ func GenerateLimitedClientConfig(c *model.Config, telemetryID string, license *m
+ 	props["SamlLoginButtonTextColor"] = ""
+ 	props["EnableSignUpWithGoogle"] = "false"
+ 	props["EnableSignUpWithOffice365"] = "false"
++	props["EnableSignUpWithGitLab"] = "false"
+ 	props["EnableSignUpWithOpenId"] = "false"
++	props["GitLabButtonText"] = ""
++	props["GitLabButtonColor"] = ""
+ 	props["OpenIdButtonText"] = ""
+ 	props["OpenIdButtonColor"] = ""
+ 	props["CWSURL"] = ""
+@@ -372,6 +375,16 @@ func GenerateLimitedClientConfig(c *model.Config, telemetryID string, license *m
+ 	props["GuestAccountsEnforceMultifactorAuthentication"] = strconv.FormatBool(*c.GuestAccountsSettings.EnforceMultifactorAuthentication)
+ 	props["EnableGuestMagicLink"] = strconv.FormatBool(*c.GuestAccountsSettings.EnableGuestMagicLink)
+ 
++	// Mattermesh: allow OAuth/OpenID providers without requiring a paid license.
++	props["EnableSignUpWithGoogle"] = strconv.FormatBool(*c.GoogleSettings.Enable)
++	props["EnableSignUpWithOffice365"] = strconv.FormatBool(*c.Office365Settings.Enable)
++	props["EnableSignUpWithOpenId"] = strconv.FormatBool(*c.OpenIdSettings.Enable)
++	props["OpenIdButtonColor"] = *c.OpenIdSettings.ButtonColor
++	props["OpenIdButtonText"] = *c.OpenIdSettings.ButtonText
++	props["EnableSignUpWithGitLab"] = strconv.FormatBool(*c.GitLabSettings.Enable)
++	props["GitLabButtonColor"] = *c.GitLabSettings.ButtonColor
++	props["GitLabButtonText"] = *c.GitLabSettings.ButtonText
++
+ 	if license != nil {
+ 		if *license.Features.LDAP {
+ 			props["EnableLdap"] = strconv.FormatBool(*c.LdapSettings.Enable)
+@@ -398,29 +411,6 @@ func GenerateLimitedClientConfig(c *model.Config, telemetryID string, license *m
+ 			props["EnforceMultifactorAuthentication"] = strconv.FormatBool(*c.ServiceSettings.EnforceMultifactorAuthentication)
+ 		}
+ 
+-		if license.IsCloud() {
+-			// MM-48727: enable SSO options for free cloud - not in self hosted
+-			*license.Features.GoogleOAuth = true
+-			*license.Features.Office365OAuth = true
+-		}
+-
+-		if *license.Features.GoogleOAuth {
+-			props["EnableSignUpWithGoogle"] = strconv.FormatBool(*c.GoogleSettings.Enable)
+-		}
+-
+-		if *license.Features.Office365OAuth {
+-			props["EnableSignUpWithOffice365"] = strconv.FormatBool(*c.Office365Settings.Enable)
+-		}
+-
+-		if *license.Features.OpenId {
+-			props["EnableSignUpWithOpenId"] = strconv.FormatBool(*c.OpenIdSettings.Enable)
+-			props["OpenIdButtonColor"] = *c.OpenIdSettings.ButtonColor
+-			props["OpenIdButtonText"] = *c.OpenIdSettings.ButtonText
+-			props["EnableSignUpWithGitLab"] = strconv.FormatBool(*c.GitLabSettings.Enable)
+-			props["GitLabButtonColor"] = *c.GitLabSettings.ButtonColor
+-			props["GitLabButtonText"] = *c.GitLabSettings.ButtonText
+-		}
+-
+ 		if model.MinimumEnterpriseLicense(license) {
+ 			props["MobileEnableBiometrics"] = strconv.FormatBool(*c.NativeAppSettings.MobileEnableBiometrics)
+ 			props["MobilePreventScreenCapture"] = strconv.FormatBool(*c.NativeAppSettings.MobilePreventScreenCapture)
+diff --git a/webapp/channels/src/components/admin_console/admin_definition.tsx b/webapp/channels/src/components/admin_console/admin_definition.tsx
+index 04300b2..9311ec2 100644
+--- a/webapp/channels/src/components/admin_console/admin_definition.tsx
++++ b/webapp/channels/src/components/admin_console/admin_definition.tsx
+@@ -4425,10 +4425,6 @@ const AdminDefinition: AdminDefinitionType = {
+                 url: 'authentication/oauth',
+                 title: defineMessage({id: 'admin.sidebar.oauth', defaultMessage: 'OAuth 2.0'}),
+                 isHidden: it.any(
+-                    it.any(
+-                        it.not(it.licensed),
+-                        it.licensedForSku('starter'),
+-                    ),
+                     it.all(
+                         it.licensedForFeature('OpenId'),
+                         it.not(usesLegacyOauth),
+@@ -4484,10 +4480,7 @@ const AdminDefinition: AdminDefinitionType = {
+                             type: 'custom',
+                             component: OpenIdConvert,
+                             key: 'OpenIdConvert',
+-                            isHidden: it.any(
+-                                it.all(it.not(it.licensedForFeature('OpenId')), it.not(it.cloudLicensed)),
+-                                it.not(usesLegacyOauth),
+-                            ),
++                            isHidden: it.not(usesLegacyOauth),
+                             isDisabled: it.not(it.userHasWritePermissionOnResource(RESOURCE_KEYS.AUTHENTICATION.OPENID)),
+                         },
+                         {
+@@ -4512,7 +4505,6 @@ const AdminDefinition: AdminDefinitionType = {
+                                 {
+                                     value: Constants.GOOGLE_SERVICE,
+                                     display_name: defineMessage({id: 'admin.oauth.google', defaultMessage: 'Google Apps'}),
+-                                    isHidden: it.all(it.not(it.licensedForFeature('GoogleOAuth')), it.not(it.cloudLicensed)),
+                                     help_text: defineMessage({id: 'admin.google.EnableMarkdownDesc', defaultMessage: '1. <linkLogin>Log in</linkLogin> to your Google account.\n2. Go to <linkConsole>https://console.developers.google.com</linkConsole>, click <strong>Credentials</strong> in the left hand side.\n 3. Under the <strong>Credentials</strong> header, click <strong>Create credentials</strong>, choose <strong>OAuth client ID</strong> and select <strong>Web Application</strong>.\n 4. Enter "Mattermost - your-company-name" as the <strong>Name</strong>.\n 5. Under <strong>Authorized redirect URIs</strong> enter <strong>"your-mattermost-url/signup/google/complete"</strong> (example: http://localhost:8065/signup/google/complete). Click <strong>Create</strong>.\n 6. Paste the <strong>Client ID</strong> and <strong>Client Secret</strong> to the fields below, then click <strong>Save</strong>.\n 7. Go to the <linkAPI>Google People API</linkAPI> and click <strong>Enable</strong>.'}), // eslint-disable-line formatjs/enforce-placeholders -- placeholders provided
+                                     help_text_markdown: false,
+                                     help_text_values: {
+@@ -4546,7 +4538,6 @@ const AdminDefinition: AdminDefinitionType = {
+                                 {
+                                     value: Constants.OFFICE365_SERVICE,
+                                     display_name: defineMessage({id: 'admin.oauth.office365', defaultMessage: 'Entra ID'}),
+-                                    isHidden: it.all(it.not(it.licensedForFeature('Office365OAuth')), it.not(it.cloudLicensed)),
+                                     help_text: defineMessage({id: 'admin.office365.EnableMarkdownDesc', defaultMessage: '1. <linkLogin>Log in</linkLogin> to your Microsoft account. \n2. In Microsoft, go to <strong>Applications</strong> and <strong>App Registrations</strong> in the left pane.\n3. Select <strong>New registration</strong>, then enter "Mattermost - your-company-name" as the <strong>Application Name</strong>. \n4. Under <strong>Redirect URI</strong>, select <strong>Web</strong>, and enter "your-mattermost-url/signup/office365/complete" as the <strong>Redirect URI</strong>. Select <strong>Register</strong>.\n5. Copy the Microsoft <strong>Application (client) ID</strong> value, and paste it below as the <strong>Client ID</strong> value. \n6. Copy the Microsoft <strong>Directory (tenant) ID</strong> value, and paste it below as the <strong>Directory (tenant) ID</strong> value. \n7. In Microsoft, create a new client secret. Copy the resulting client secret value, and paste it below as the <strong>Client Secret</strong> value. Select <strong>Save</strong>.'}), // eslint-disable-line formatjs/enforce-placeholders -- placeholders provided
+                                     help_text_markdown: false,
+                                     help_text_values: {
+@@ -4756,7 +4747,6 @@ const AdminDefinition: AdminDefinitionType = {
+                 url: 'authentication/openid',
+                 title: defineMessage({id: 'admin.sidebar.openid', defaultMessage: 'OpenID Connect'}),
+                 isHidden: it.any(
+-                    it.all(it.not(it.licensedForFeature('OpenId')), it.not(it.cloudLicensed)),
+                     it.not(it.userHasReadPermissionOnResource(RESOURCE_KEYS.AUTHENTICATION.OPENID)),
+                 ),
+                 schema: {
+@@ -5124,9 +5114,7 @@ const AdminDefinition: AdminDefinitionType = {
+                 url: 'authentication/openid',
+                 isDiscovery: true,
+                 title: defineMessage({id: 'admin.sidebar.openid', defaultMessage: 'OpenID Connect'}),
+-                isHidden: it.any(
+-                    it.any(it.licensedForFeature('OpenId'), it.cloudLicensed),
+-                ),
++                isHidden: true,
+                 schema: {
+                     id: 'OpenIdSettings',
+                     name: defineMessage({id: 'admin.authentication.openid', defaultMessage: 'OpenID Connect'}),
+@@ -5145,9 +5133,7 @@ const AdminDefinition: AdminDefinitionType = {
+                 url: 'authentication/gitlab',
+                 isDiscovery: true,
+                 title: defineMessage({id: 'admin.sidebar.gitlab', defaultMessage: 'GitLab'}),
+-                isHidden: it.any(
+-                    it.licensedForFeature('OpenId'),
+-                ),
++                isHidden: true,
+                 schema: {
+                     id: 'GitLabSettings',
+                     name: defineMessage({id: 'admin.authentication.gitlab', defaultMessage: 'GitLab'}),

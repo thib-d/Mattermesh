@@ -1,34 +1,45 @@
 # Mattermesh
 
-Mattermesh est une base communautaire **non-enterprise** autour de Mattermost.
+Mattermesh is an early-stage community project based on Mattermost.
 
-Objectif actuel:
-- rester sur une build Team/non-enterprise
-- conserver une base simple auto-hebergee
-- retirer les dependances/pieces enterprise
-- appliquer uniquement un patch de limite utilisateurs
+Important note:
+- we intentionally build from a non-enterprise baseline so patches can be applied and maintained with fewer conflicts
+- this project does not claim to rewrite licensing terms
+- if a legal expert wants to help review or propose a clean licensing path, contributions are very welcome
 
-Etat du projet:
-- experimental
-- non pret pour production
-- contributions bienvenues
+Current focus:
+- implement SSO support through a dedicated patch
+- remove restrictive user limits
+- keep the setup simple with Docker Compose
 
-## Ce que contient ce repo
+Status:
+- not production-ready
+- looking for contributors
 
-- `Dockerfile`: build Mattermost en mode `BUILD_ENTERPRISE=false`
-- `docker-compose.yml`: stack locale (Mattermesh + PostgreSQL)
-- `patches/mattermesh-nolimituserpatch.patch`: patch limites utilisateurs
+## Source Baseline
 
-## Lancement
+Mattermesh builds from:
+- repository: `https://github.com/mattermost/mattermost`
+- pinned commit: `e296a314bb93a318b66aec81353776b7d95aa04a`
+
+## Included Patches
+
+- `patches/mattermesh-sso.patch`
+- `patches/mattermesh-nolimituserpatch.patch`
+
+## Run
 
 ```bash
 docker compose build --no-cache
 docker compose up -d
 ```
 
-Puis ouvrir `http://localhost:8065`.
+Then open `http://localhost:8065`.
 
-## Important
+## Contributing
 
-Ce repo ne doit pas reintroduire de mecanismes enterprise.
-Si une contribution ajoute un couplage enterprise/licence, elle devra etre refusee.
+Contributions are welcome.
+Please include:
+- the exact upstream commit tested
+- clear patch rationale
+- reproducible validation steps
