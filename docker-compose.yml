@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mattermost
+      POSTGRES_USER: mmuser
+      POSTGRES_PASSWORD: mmuser_password
+    volumes:
+      - mattermesh_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mmuser -d mattermost"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  mattermesh:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        MATTERMOST_REPO: https://github.com/thib-d/mattermost
+        MATTERMOST_REF: master
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      MM_SERVICESETTINGS_LISTENADDRESS: ":8065"
+      MM_SERVICESETTINGS_SITEURL: "http://localhost:8065"
+      MM_SQLSETTINGS_DRIVERNAME: "postgres"
+      MM_SQLSETTINGS_DATASOURCE: "postgres://mmuser:mmuser_password@postgres:5432/mattermost?sslmode=disable&connect_timeout=10"
+      MM_PLUGINSETTINGS_ENABLE: "true"
+      MM_PLUGINSETTINGS_ENABLEUPLOADS: "true"
+      MM_LOGSETTINGS_CONSOLELEVEL: "INFO"
+    ports:
+      - "8065:8065"
+    volumes:
+      - mattermesh_config:/mattermost/config
+      - mattermesh_data:/mattermost/data
+      - mattermesh_logs:/mattermost/logs
+      - mattermesh_plugins:/mattermost/plugins
+      - mattermesh_client_plugins:/mattermost/client/plugins
+      - mattermesh_bleve:/mattermost/bleve-indexes
+
+volumes:
+  mattermesh_db:
+  mattermesh_config:
+  mattermesh_data:
+  mattermesh_logs:
+  mattermesh_plugins:
+  mattermesh_client_plugins:
+  mattermesh_bleve:
