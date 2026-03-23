@@ -133,3 +133,244 @@ index 04300b2..9311ec2 100644
                  schema: {
                      id: 'GitLabSettings',
                      name: defineMessage({id: 'admin.authentication.gitlab', defaultMessage: 'GitLab'}),
+diff --git a/server/cmd/mattermost/main.go b/server/cmd/mattermost/main.go
+index 20bc0a2..a53d2b1 100644
+--- a/server/cmd/mattermost/main.go
++++ b/server/cmd/mattermost/main.go
+@@ -10,6 +10,7 @@ import (
+ 	_ "github.com/mattermost/mattermost/server/v8/channels/app/slashcommands"
+ 	// Plugins
+ 	_ "github.com/mattermost/mattermost/server/v8/channels/app/oauthproviders/gitlab"
++	_ "github.com/mattermost/mattermost/server/v8/channels/app/oauthproviders/openid"
+ 
+ 	// Enterprise Imports
+ 	_ "github.com/mattermost/mattermost/server/v8/enterprise"
+diff --git a/server/channels/app/oauthproviders/openid/openid.go b/server/channels/app/oauthproviders/openid/openid.go
+new file mode 100644
+index 0000000..f7e9fa2
+--- /dev/null
++++ b/server/channels/app/oauthproviders/openid/openid.go
+@@ -0,0 +1,223 @@
++// Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
++// See LICENSE.txt for license information.
++
++package oauthopenid
++
++import (
++	"encoding/base64"
++	"encoding/json"
++	"fmt"
++	"io"
++	"net/http"
++	"strings"
++	"time"
++
++	"github.com/mattermost/mattermost/server/public/model"
++	"github.com/mattermost/mattermost/server/public/shared/mlog"
++	"github.com/mattermost/mattermost/server/public/shared/request"
++	"github.com/mattermost/mattermost/server/v8/einterfaces"
++)
++
++type OpenIDProvider struct{}
++
++type openIDClaims struct {
++	Sub               string `json:"sub"`
++	Email             string `json:"email"`
++	Name              string `json:"name"`
++	GivenName         string `json:"given_name"`
++	FamilyName        string `json:"family_name"`
++	PreferredUsername string `json:"preferred_username"`
++	Username          string `json:"username"`
++	Nickname          string `json:"nickname"`
++}
++
++type openIDMetadata struct {
++	AuthorizationEndpoint string `json:"authorization_endpoint"`
++	TokenEndpoint         string `json:"token_endpoint"`
++	UserinfoEndpoint      string `json:"userinfo_endpoint"`
++}
++
++func init() {
++	einterfaces.RegisterOAuthProvider(model.ServiceOpenid, &OpenIDProvider{})
++}
++
++func cleanPreferredUsername(username string) string {
++	if username == "" {
++		return ""
++	}
++
++	return strings.Split(username, "@")[0]
++}
++
++func usernameFromClaims(claims *openIDClaims, settings *model.SSOSettings) string {
++	if settings != nil && model.SafeDereference(settings.UsePreferredUsername) && claims.PreferredUsername != "" {
++		return cleanPreferredUsername(claims.PreferredUsername)
++	}
++	if claims.Username != "" {
++		return claims.Username
++	}
++	if claims.PreferredUsername != "" {
++		return cleanPreferredUsername(claims.PreferredUsername)
++	}
++	if claims.Nickname != "" {
++		return claims.Nickname
++	}
++	if claims.Email != "" {
++		return cleanPreferredUsername(claims.Email)
++	}
++	return claims.Sub
++}
++
++func userFromClaims(logger mlog.LoggerIFace, claims *openIDClaims, tokenUser *model.User, settings *model.SSOSettings) (*model.User, error) {
++	user := &model.User{}
++
++	user.Username = model.CleanUsername(logger, usernameFromClaims(claims, settings))
++	user.Email = strings.ToLower(strings.TrimSpace(claims.Email))
++	user.FirstName = strings.TrimSpace(claims.GivenName)
++	user.LastName = strings.TrimSpace(claims.FamilyName)
++	user.Nickname = strings.TrimSpace(claims.Nickname)
++
++	if user.FirstName == "" && user.LastName == "" && claims.Name != "" {
++		parts := strings.Fields(claims.Name)
++		if len(parts) > 0 {
++			user.FirstName = parts[0]
++		}
++		if len(parts) > 1 {
++			user.LastName = strings.Join(parts[1:], " ")
++		}
++	}
++
++	authData := strings.TrimSpace(claims.Sub)
++	if authData != "" {
++		user.AuthData = &authData
++	}
++	user.AuthService = model.ServiceOpenid
++
++	if tokenUser != nil {
++		if user.Username == "" {
++			user.Username = tokenUser.Username
++		}
++		if user.Email == "" {
++			user.Email = tokenUser.Email
++		}
++		if user.FirstName == "" {
++			user.FirstName = tokenUser.FirstName
++		}
++		if user.LastName == "" {
++			user.LastName = tokenUser.LastName
++		}
++		if user.Nickname == "" {
++			user.Nickname = tokenUser.Nickname
++		}
++		if (user.AuthData == nil || *user.AuthData == "") && tokenUser.AuthData != nil && *tokenUser.AuthData != "" {
++			authDataCopy := *tokenUser.AuthData
++			user.AuthData = &authDataCopy
++		}
++	}
++
++	if user.AuthData == nil || *user.AuthData == "" {
++		return nil, fmt.Errorf("openid claims missing sub")
++	}
++	if user.Username == "" {
++		return nil, fmt.Errorf("openid claims missing username")
++	}
++	if user.Email == "" {
++		return nil, fmt.Errorf("openid claims missing email")
++	}
++
++	return user, nil
++}
++
++func decodeClaims(data io.Reader) (*openIDClaims, error) {
++	decoder := json.NewDecoder(data)
++	var claims openIDClaims
++	if err := decoder.Decode(&claims); err != nil {
++		return nil, err
++	}
++	return &claims, nil
++}
++
++func (op *OpenIDProvider) GetUserFromJSON(rctx request.CTX, data io.Reader, tokenUser *model.User, settings *model.SSOSettings) (*model.User, error) {
++	claims, err := decodeClaims(data)
++	if err != nil {
++		return nil, err
++	}
++	return userFromClaims(rctx.Logger(), claims, tokenUser, settings)
++}
++
++func (op *OpenIDProvider) GetSSOSettings(_ request.CTX, config *model.Config, service string) (*model.SSOSettings, error) {
++	sso := config.GetSSOService(service)
++	if sso == nil {
++		return nil, fmt.Errorf("missing SSO settings for %s", service)
++	}
++
++	resolved := *sso
++	needsDiscovery := strings.TrimSpace(model.SafeDereference(resolved.AuthEndpoint)) == "" ||
++		strings.TrimSpace(model.SafeDereference(resolved.TokenEndpoint)) == "" ||
++		strings.TrimSpace(model.SafeDereference(resolved.UserAPIEndpoint)) == ""
++
++	discoveryURL := strings.TrimSpace(model.SafeDereference(resolved.DiscoveryEndpoint))
++	if !needsDiscovery || discoveryURL == "" {
++		return &resolved, nil
++	}
++
++	client := &http.Client{Timeout: 10 * time.Second}
++	req, err := http.NewRequest(http.MethodGet, discoveryURL, nil)
++	if err != nil {
++		return nil, err
++	}
++	req.Header.Set("Accept", "application/json")
++
++	resp, err := client.Do(req)
++	if err != nil {
++		return nil, err
++	}
++	defer resp.Body.Close()
++
++	if resp.StatusCode != http.StatusOK {
++		return nil, fmt.Errorf("openid discovery returned status %d", resp.StatusCode)
++	}
++
++	var metadata openIDMetadata
++	if err := json.NewDecoder(resp.Body).Decode(&metadata); err != nil {
++		return nil, err
++	}
++
++	if strings.TrimSpace(model.SafeDereference(resolved.AuthEndpoint)) == "" {
++		resolved.AuthEndpoint = model.NewPointer(metadata.AuthorizationEndpoint)
++	}
++	if strings.TrimSpace(model.SafeDereference(resolved.TokenEndpoint)) == "" {
++		resolved.TokenEndpoint = model.NewPointer(metadata.TokenEndpoint)
++	}
++	if strings.TrimSpace(model.SafeDereference(resolved.UserAPIEndpoint)) == "" {
++		resolved.UserAPIEndpoint = model.NewPointer(metadata.UserinfoEndpoint)
++	}
++
++	return &resolved, nil
++}
++
++func (op *OpenIDProvider) GetUserFromIdToken(rctx request.CTX, idToken string) (*model.User, error) {
++	parts := strings.Split(idToken, ".")
++	if len(parts) < 2 {
++		return nil, fmt.Errorf("invalid id_token")
++	}
++
++	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
++	if err != nil {
++		return nil, err
++	}
++
++	claims, err := decodeClaims(strings.NewReader(string(payload)))
++	if err != nil {
++		return nil, err
++	}
++
++	return userFromClaims(rctx.Logger(), claims, nil, &model.SSOSettings{UsePreferredUsername: model.NewPointer(true)})
++}
++
++func (op *OpenIDProvider) IsSameUser(_ request.CTX, dbUser, oauthUser *model.User) bool {
++	if dbUser.AuthData == nil || oauthUser.AuthData == nil {
++		return false
++	}
++	return *dbUser.AuthData == *oauthUser.AuthData
++}
